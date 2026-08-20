@@ -4,6 +4,7 @@ import json
 import os
 import re
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 from typing import Callable, Tuple
 from xml.etree import ElementTree as ET
@@ -22,26 +23,44 @@ card_data_tuple = Tuple[str, str, int, int]
 def parse_deck_helper(deck_text: str, is_card_line: Callable[[str], bool], extract_card_data: Callable[[str], card_data_tuple], handle_card: Callable) -> None:
     error_lines = []
 
+    cards = []
     index = 0
     for line in deck_text.strip().split('\n'):
         if is_card_line(line):
             index = index + 1
-
-            name, set_code, collector_number, quantity = extract_card_data(line)
-
-            parts = [f'Index: {index}', f'quantity: {quantity}']
-            if set_code: parts.append(f'set code: {set_code}')
-            if collector_number: parts.append(f'collector number: {collector_number}')
-            if name: parts.append(f'name: {name}')
-            print(', '.join(parts))
-            try:
-                handle_card(index, name, set_code, collector_number, quantity)
-            except Exception as e:
-                print(f'Error: {e}')
-                error_lines.append((line, e))
-
+            cards.append((index, line, extract_card_data(line)))
         else:
             print(f'Skipping: "{line}"')
+
+    def fetch_one(entry) -> None:
+        index, _, (name, set_code, collector_number, quantity) = entry
+        parts = [f'Index: {index}', f'quantity: {quantity}']
+        if set_code: parts.append(f'set code: {set_code}')
+        if collector_number: parts.append(f'collector number: {collector_number}')
+        if name: parts.append(f'name: {name}')
+        print(', '.join(parts))
+        handle_card(index, name, set_code, collector_number, quantity)
+
+    # Resolve all cards in bulk first when the handler supports it (75 cards
+    # per Scryfall request instead of one each); misses fall back per-card.
+    prefetch = getattr(handle_card, 'prefetch', None)
+    if prefetch is not None and cards:
+        try:
+            prefetch([(name, set_code, collector_number) for _, _, (name, set_code, collector_number, _) in cards])
+        except Exception as e:
+            print(f'Batch prefetch failed ({e}); using per-card requests instead.')
+
+    # Cards are independent, so fetch them in parallel; the aggregate Scryfall
+    # request rate is capped globally in scryfall.request_scryfall.
+    workers = max(1, int(os.environ.get('MTG_FETCH_WORKERS', '8')))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(fetch_one, entry): entry for entry in cards}
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                print(f'Error: {e}')
+                error_lines.append((futures[future][1], e))
 
     if len(error_lines) > 0:
         print(f'Errors: {error_lines}')

@@ -1,4 +1,5 @@
 import os
+import threading
 from io import BytesIO
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
@@ -11,7 +12,59 @@ from .common import remove_nonalphanumeric, ScryfallLanguage, to_scryfall_api_la
 
 double_sided_layouts = ['transform', 'modal_dfc', 'double_faced_token', 'reversible_card', 'meld']
 
-session = requests.Session()
+# One Session per thread — requests.Session is not thread-safe, and cards are
+# fetched from multiple worker threads (see parse_deck_helper).
+_thread_local = threading.local()
+
+def _get_session() -> requests.Session:
+    if not hasattr(_thread_local, 'session'):
+        _thread_local.session = requests.Session()
+    return _thread_local.session
+
+# Global request spacing so the aggregate api.scryfall.com rate stays under
+# Scryfall's documented 10 req/s limit regardless of worker-thread count.
+_rate_lock = threading.Lock()
+_next_request_slot = 0.0
+MIN_API_INTERVAL = 0.15
+
+def _throttle_api() -> None:
+    global _next_request_slot
+    with _rate_lock:
+        now = time.monotonic()
+        slot = max(_next_request_slot, now)
+        _next_request_slot = slot + MIN_API_INTERVAL
+    if slot > now:
+        time.sleep(slot - now)
+
+# Cards resolved in bulk via /cards/collection, keyed by lowercased card name
+# (face names included) and by (set, collector_number). Filled once before the
+# worker pool starts, read-only afterwards.
+_card_cache = {}
+
+def prefetch_cards(entries: List[Tuple[str, str, str]], ignore_set_and_collector_number: bool = False) -> None:
+    identifiers = []
+    for name, set_code, collector_number in entries:
+        if set_code and collector_number and not ignore_set_and_collector_number:
+            identifiers.append({'set': set_code.lower(), 'collector_number': collector_number})
+        elif name:
+            identifiers.append({'name': name})
+
+    for start in range(0, len(identifiers), 75):
+        chunk = identifiers[start:start + 75]
+        _throttle_api()
+        r = _get_session().post(
+            'https://api.scryfall.com/cards/collection',
+            json={'identifiers': chunk},
+            headers={'user-agent': 'silhouette-card-maker/0.1', 'accept': '*/*'},
+        )
+        if r.status_code != 200:
+            print(f'Batch card lookup failed ({r.status_code}); using per-card requests instead.')
+            return
+        for card in r.json().get('data', []):
+            _card_cache[card['name'].lower()] = card
+            for face in card.get('card_faces', []):
+                _card_cache[face['name'].lower()] = card
+            _card_cache[(card['set'], card['collector_number'])] = card
 
 def append_search_filter(uri: str, filter_term: str) -> str:
     parsed = urlparse(uri)
@@ -40,7 +93,13 @@ def request_scryfall(
     params: dict = None,
     retry_count: int = 0,
 ) -> requests.Response:
-    r = session.get(query, params=params, headers = {'user-agent': 'silhouette-card-maker/0.1', 'accept': '*/*'})
+    # Rate limit per Scryfall API documentation, applied globally across threads
+    # BEFORE each request. See: https://scryfall.com/docs/api/rate-limits
+    # Direct image downloads from the *.scryfall.io CDN are exempt.
+    if 'api.scryfall.com' in query:
+        _throttle_api()
+
+    r = _get_session().get(query, params=params, headers = {'user-agent': 'silhouette-card-maker/0.1', 'accept': '*/*'})
 
     # Rate limit check - Scryfall requires 30 second wait per their documentation
     if r.status_code == 429:
@@ -48,21 +107,16 @@ def request_scryfall(
             print(f"Warning: Hit rate limit 3 times for {query}, giving up after 30s wait")
             raise requests.exceptions.HTTPError(f"Max retries (3) exceeded for Scryfall API: {query}", response=r)
         print(f"Hit Scryfall rate limit (429), waiting 30 seconds before retry {retry_count + 1}/3...")
+        # Back off globally: push every thread's next slot past the wait and widen
+        # the spacing, so one 429 doesn't cascade across the worker pool.
+        global _next_request_slot, MIN_API_INTERVAL
+        with _rate_lock:
+            _next_request_slot = max(_next_request_slot, time.monotonic() + 30)
+            MIN_API_INTERVAL = min(MIN_API_INTERVAL * 2, 1.0)
         time.sleep(30)
         return request_scryfall(query, params, retry_count + 1)
 
     r.raise_for_status()
-
-    # Apply rate limiting per Scryfall API documentation
-    # See: https://scryfall.com/docs/api/rate-limits
-    # Note: Direct image downloads from *.scryfall.io CDN have NO rate limits
-
-    if "cards/search" in query or "cards/named" in query:
-        time.sleep(0.5)   # Search/named endpoints: 2 requests/second (500ms delay)
-    elif 'api.scryfall.com' in query:
-        time.sleep(0.1)  # All other API methods: 10 requests/second (100ms delay)
-    # else: No rate limiting needed for direct image downloads from *.scryfall.io CDN
-
     return r
 
 def save_card_art_copies(data: bytes, output_dir: str, index: int, clean_card_name: str, quantity: int) -> None:
@@ -157,6 +211,18 @@ def fetch_image(card_set: str, card_collector_number: str, prefer_langs: List[Sc
                 print(f'Language "{lang.value}" not available for set code: {card_set} and collector number: {card_collector_number}, falling back to "{next_lang.value}".')
     raise last_error
 
+def _png_url(card_json: dict, face_index: int) -> Optional[str]:
+    faces = card_json.get('card_faces') or []
+    if len(faces) > face_index:
+        uris = faces[face_index].get('image_uris')
+        if uris:
+            return uris.get('png')
+    if face_index == 0:
+        uris = card_json.get('image_uris')
+        if uris:
+            return uris.get('png')
+    return None
+
 def fetch_card_art(
     index: int,
     quantity: int,
@@ -172,9 +238,18 @@ def fetch_card_art(
 
     front_img_dir: str = None,
     double_sided_dir: str = None,
+    card_json: dict = None,
 ) -> None:
+    # Prefer the CDN image URLs already present in the card JSON — *.scryfall.io
+    # is exempt from the API rate limit. Language preferences still go through
+    # the per-language API endpoint.
+    use_cdn = card_json is not None and not prefer_langs
+
     # Query for the front side
-    card_art = fetch_image(card_set, card_collector_number, prefer_langs)
+    if use_cdn and (url := _png_url(card_json, 0)):
+        card_art = request_scryfall(url).content
+    else:
+        card_art = fetch_image(card_set, card_collector_number, prefer_langs)
     if card_art is not None:
         save_card_art_copies(card_art, front_img_dir, index, clean_card_name, quantity)
 
@@ -184,7 +259,10 @@ def fetch_card_art(
             if all_parts and card_name:
                 fetch_meld_back(index, quantity, clean_card_name, card_name, all_parts, double_sided_dir)
         else:
-            card_art = fetch_image(card_set, card_collector_number, prefer_langs, face='back')
+            if use_cdn and (url := _png_url(card_json, 1)):
+                card_art = request_scryfall(url).content
+            else:
+                card_art = fetch_image(card_set, card_collector_number, prefer_langs, face='back')
             if card_art is not None:
                 save_card_art_copies(card_art, double_sided_dir, index, clean_card_name, quantity)
 
@@ -215,6 +293,10 @@ def filtering(printings: List, filters):
 
     return pool
 
+def _is_basic_land(card_json: dict) -> bool:
+    # "Basic Land — Forest", "Basic Snow Land — Island", ...
+    return card_json.get('type_line', '').startswith('Basic')
+
 def fetch_card(
     index: int,
     quantity: int,
@@ -240,13 +322,20 @@ def fetch_card(
 
     front_img_dir: str,
     double_sided_dir: str,
+
+    skip_basics: bool = False,
 ):
     # Query based on card set and card collector number if provided
     if not ignore_set_and_collector_number and card_set != "" and card_collector_number != "":
-        card_info_query = f"https://api.scryfall.com/cards/{card_set.lower()}/{card_collector_number}"
+        # Query for card info (batch-prefetched cards skip the API call)
+        card_json = _card_cache.get((card_set.lower(), str(card_collector_number)))
+        if card_json is None:
+            card_info_query = f"https://api.scryfall.com/cards/{card_set.lower()}/{card_collector_number}"
+            card_json = request_scryfall(card_info_query).json()
 
-        # Query for card info
-        card_json = request_scryfall(card_info_query).json()
+        if skip_basics and _is_basic_land(card_json):
+            print(f'Skipping basic land: {card_json["name"]}')
+            return
 
         fetch_card_art(
             index,
@@ -260,6 +349,7 @@ def fetch_card(
             prefer_langs,
             front_img_dir,
             double_sided_dir,
+            card_json=card_json,
         )
 
         # Fetch tokens
@@ -280,6 +370,7 @@ def fetch_card(
                             prefer_langs=prefer_langs,
                             front_img_dir=front_img_dir,
                             double_sided_dir=double_sided_dir,
+                            card_json=card_json,
                         )
 
     # Query based on card name
@@ -287,24 +378,32 @@ def fetch_card(
         if name == "":
             raise Exception()
 
-        # Query for card info (use params= for correct URL encoding of accented/special chars)
-        try:
-            card_json = request_scryfall('https://api.scryfall.com/cards/named', params={'exact': name}).json()
-        except requests.exceptions.HTTPError as e:
-            if e.response is None or e.response.status_code != 404:
-                raise
-            # Fall back to flavor name search (e.g. Godzilla series, convention promos)
-            search_json = request_scryfall('https://api.scryfall.com/cards/search', params={'q': f'flavor_name:"{name}"', 'unique': 'cards'}).json()
-            if not search_json.get('data'):
-                raise
-            card_json = search_json['data'][0]
-            print(f'Found by flavor name: {card_json["name"]}')
+        # Query for card info (batch-prefetched cards skip the API call;
+        # use params= for correct URL encoding of accented/special chars)
+        card_json = _card_cache.get(name.lower())
+        if card_json is None:
+            try:
+                card_json = request_scryfall('https://api.scryfall.com/cards/named', params={'exact': name}).json()
+            except requests.exceptions.HTTPError as e:
+                if e.response is None or e.response.status_code != 404:
+                    raise
+                # Fall back to flavor name search (e.g. Godzilla series, convention promos)
+                search_json = request_scryfall('https://api.scryfall.com/cards/search', params={'q': f'flavor_name:"{name}"', 'unique': 'cards'}).json()
+                if not search_json.get('data'):
+                    raise
+                card_json = search_json['data'][0]
+                print(f'Found by flavor name: {card_json["name"]}')
+
+        if skip_basics and _is_basic_land(card_json):
+            print(f'Skipping basic land: {card_json["name"]}')
+            return
 
         # Filter out symbols from card names for use in filenames
         clean_card_name = remove_nonalphanumeric(name)
 
         set = card_json["set"]
         collector_number = card_json["collector_number"]
+        chosen_json = card_json
 
         # Filter over available printings when any filtering option is set
         needs_filtering = prefer_langs or prefer_older_sets or prefer_sets or ignore_sets or prefer_showcase or prefer_extra_art or prefer_ub or ignore_ub
@@ -345,6 +444,7 @@ def fetch_card(
                 best_print = filtered_printings[0]
                 set = best_print["set"]
                 collector_number = best_print["collector_number"]
+                chosen_json = best_print
 
         fetch_card_art(
             index,
@@ -358,6 +458,7 @@ def fetch_card(
             prefer_langs,
             front_img_dir,
             double_sided_dir,
+            card_json=chosen_json,
         )
 
         # Fetch tokens
@@ -378,6 +479,7 @@ def fetch_card(
                             prefer_langs=prefer_langs,
                             front_img_dir=front_img_dir,
                             double_sided_dir=double_sided_dir,
+                            card_json=card_json,
                         )
 
 def get_handle_card(
@@ -398,6 +500,8 @@ def get_handle_card(
 
     front_img_dir: str,
     double_sided_dir: str,
+
+    skip_basics: bool = False,
 ):
     def configured_fetch_card(index: int, name: str, card_set: str = None, card_collector_number: int = None, quantity: int = 1):
         fetch_card(
@@ -425,5 +529,11 @@ def get_handle_card(
 
             front_img_dir,
             double_sided_dir,
+            skip_basics=skip_basics,
         )
+
+    def configured_prefetch(entries):
+        prefetch_cards(entries, ignore_set_and_collector_number)
+    configured_fetch_card.prefetch = configured_prefetch
+
     return configured_fetch_card

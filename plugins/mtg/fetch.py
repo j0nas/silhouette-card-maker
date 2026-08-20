@@ -29,6 +29,7 @@ double_sided_directory = os.path.join(REPO_ROOT, 'game', 'double_sided')
 @click.option('--prefer_ub', default=False, is_flag=True, show_default=True, help="Prefer Universe Beyond printings when available.")
 @click.option('--ignore_ub', default=False, is_flag=True, show_default=True, help="Exclude Universe Beyond printings from consideration.")
 @click.option('--tokens', default=False, is_flag=True, show_default=True, help="Fetch related tokens when fetching cards")
+@click.option('--skip_basics', default=False, is_flag=True, show_default=True, help="Skip basic lands (including snow-covered).")
 
 def cli(
     deck_path: str,
@@ -47,6 +48,7 @@ def cli(
     ignore_ub: bool,
 
     tokens: bool,
+    skip_basics: bool,
 ):
     ensure_directory(front_directory)
     ensure_directory(double_sided_directory)
@@ -85,6 +87,7 @@ def cli(
 
             front_directory,
             double_sided_directory,
+            skip_basics=skip_basics,
         )
 
     parse_deck(

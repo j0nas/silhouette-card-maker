@@ -95,7 +95,7 @@ def parse_simple_list(deck_text, handle_card: Callable) -> None:
 # Sideboard
 # 1 Containment Priest
 def parse_mtga(deck_text, handle_card: Callable) -> None:
-    pattern = re.compile(r'(\d+)x?\s+(.+?)\s+\((\w+)\)\s+(\d+)', re.IGNORECASE)
+    pattern = re.compile(r'(\d+)x?\s+(.+?)\s+\((\w+)\)\s+([^\s]+)', re.IGNORECASE)
     fallback_pattern = re.compile(r'(\d+)x?\s+(.+)')
 
     def is_mtga_card_line(line) -> bool:

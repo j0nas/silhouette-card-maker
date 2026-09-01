@@ -95,25 +95,38 @@ def parse_simple_list(deck_text, handle_card: Callable) -> None:
 # Sideboard
 # 1 Containment Priest
 def parse_mtga(deck_text, handle_card: Callable) -> None:
-    pattern = re.compile(r'(\d+)x?\s+(.+?)\s+\((\w+)\)\s+([^\s]+)', re.IGNORECASE)
-    fallback_pattern = re.compile(r'(\d+)x?\s+(.+)')
+    # The leading quantity is optional; a bare card name means one copy.
+    pattern = re.compile(r'^(?:(\d+)x?\s+)?(.+?)\s+\((\w+)\)\s+([^\s]+)', re.IGNORECASE)
+    fallback_pattern = re.compile(r'^(?:(\d+)x?\s+)?(.+)')
+
+    # Section markers of an MTGA export — not cards, even without a quantity.
+    section_headers = {'about', 'commander', 'companion', 'deck', 'sideboard', 'maybeboard', 'tokens'}
 
     def is_mtga_card_line(line) -> bool:
-        return bool(pattern.match(line) or fallback_pattern.match(line))
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#') or stripped.startswith('//'):
+            return False
+        if stripped.rstrip(':').lower() in section_headers:
+            return False
+        # "Name <deck name>" under the About section
+        if re.match(r'^Name\s+', stripped) and not re.match(r'^Name\s+\(', stripped):
+            return False
+        return bool(pattern.match(stripped) or fallback_pattern.match(stripped))
 
     def extract_mtga_card_data(line) -> card_data_tuple:
+        line = line.strip()
         match = pattern.match(line)
         if match:
-            quantity = int(match.group(1))
+            quantity = int(match.group(1)) if match.group(1) else 1
             name = match.group(2).strip()
             set_code = match.group(3).strip()
             collector_number = match.group(4).strip()
 
             return (name, set_code, collector_number, quantity)
         else:
-            # Handle simpler "1x Mountain" lines
+            # Handle simpler "1x Mountain" / "Mountain" lines
             fallback_match = fallback_pattern.match(line)
-            quantity = int(fallback_match.group(1))
+            quantity = int(fallback_match.group(1)) if fallback_match.group(1) else 1
             name = fallback_match.group(2).strip()
 
             return (name, "", "", quantity)

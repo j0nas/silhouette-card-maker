@@ -29,6 +29,7 @@ double_sided_directory = os.path.join(REPO_ROOT, 'game', 'double_sided')
 @click.option('--prefer_ub', default=False, is_flag=True, show_default=True, help="Prefer Universe Beyond printings when available.")
 @click.option('--ignore_ub', default=False, is_flag=True, show_default=True, help="Exclude Universe Beyond printings from consideration.")
 @click.option('--tokens', default=False, is_flag=True, show_default=True, help="Fetch related tokens when fetching cards")
+@click.option('--token_copies', default=0, show_default=True, help="With --tokens: fetch this many copies of each distinct token (deduplicated across the deck) instead of one per copy of the producing card. 0 keeps the per-card behavior. Emblems are never fetched.")
 @click.option('--skip_basics', default=False, is_flag=True, show_default=True, help="Skip basic lands (including snow-covered).")
 
 def cli(
@@ -48,6 +49,7 @@ def cli(
     ignore_ub: bool,
 
     tokens: bool,
+    token_copies: int,
     skip_basics: bool,
 ):
     ensure_directory(front_directory)
@@ -88,6 +90,7 @@ def cli(
             front_directory,
             double_sided_directory,
             skip_basics=skip_basics,
+            token_copies=token_copies,
         )
 
     parse_deck(

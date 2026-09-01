@@ -297,6 +297,47 @@ def _is_basic_land(card_json: dict) -> bool:
     # "Basic Land — Forest", "Basic Snow Land — Island", ...
     return card_json.get('type_line', '').startswith('Basic')
 
+# Tokens already fetched this run, keyed by oracle_id so functionally identical
+# tokens from different source cards/printings count as one. Guarded by a lock —
+# cards (and thus their tokens) are fetched from multiple worker threads.
+_token_lock = threading.Lock()
+_seen_token_oracle_ids = set()
+
+def _fetch_token(
+    index: int,
+    quantity: int,
+    related: dict,
+    token_copies: int,
+    prefer_langs: List[ScryfallLanguage],
+    front_img_dir: str,
+    double_sided_dir: str,
+):
+    token_json = request_scryfall(related['uri']).json()
+
+    if token_copies:
+        # Fixed-count mode: fetch token_copies of each distinct token, once,
+        # no matter how many deck cards produce it.
+        oracle_id = token_json.get('oracle_id', token_json['id'])
+        with _token_lock:
+            if oracle_id in _seen_token_oracle_ids:
+                return
+            _seen_token_oracle_ids.add(oracle_id)
+        quantity = token_copies
+
+    fetch_card_art(
+        index,
+        quantity,
+        # Offspring tokens have the same name as the card, so append _token to differentiate
+        f'{remove_nonalphanumeric(related["name"])}_token',
+        token_json['set'],
+        token_json['collector_number'],
+        token_json['layout'],
+        prefer_langs=prefer_langs,
+        front_img_dir=front_img_dir,
+        double_sided_dir=double_sided_dir,
+        card_json=token_json,
+    )
+
 def fetch_card(
     index: int,
     quantity: int,
@@ -324,6 +365,7 @@ def fetch_card(
     double_sided_dir: str,
 
     skip_basics: bool = False,
+    token_copies: int = 0,
 ):
     # Query based on card set and card collector number if provided
     if not ignore_set_and_collector_number and card_set != "" and card_collector_number != "":
@@ -357,21 +399,7 @@ def fetch_card(
             if all_parts := card_json.get("all_parts"):
                 for related in all_parts:
                     if related["component"] == "token":
-                        card_info_query = related["uri"]
-                        card_json = request_scryfall(card_info_query).json()
-                        fetch_card_art(
-                            index,
-                            quantity,
-                            # Offsprint tokens have the same name as the card, so append _token to differentiate
-                            f'{remove_nonalphanumeric(related["name"])}_token',
-                            card_json["set"],
-                            card_json["collector_number"],
-                            card_json["layout"],
-                            prefer_langs=prefer_langs,
-                            front_img_dir=front_img_dir,
-                            double_sided_dir=double_sided_dir,
-                            card_json=card_json,
-                        )
+                        _fetch_token(index, quantity, related, token_copies, prefer_langs, front_img_dir, double_sided_dir)
 
     # Query based on card name
     else:
@@ -466,21 +494,7 @@ def fetch_card(
             if all_parts := card_json.get("all_parts"):
                 for related in all_parts:
                     if related["component"] == "token":
-                        card_info_query = related["uri"]
-                        card_json = request_scryfall(card_info_query).json()
-                        fetch_card_art(
-                            index,
-                            quantity,
-                            # Offsprint tokens have the same name as the card, so append _token to differentiate
-                            f'{remove_nonalphanumeric(related["name"])}_token',
-                            card_json["set"],
-                            card_json["collector_number"],
-                            card_json["layout"],
-                            prefer_langs=prefer_langs,
-                            front_img_dir=front_img_dir,
-                            double_sided_dir=double_sided_dir,
-                            card_json=card_json,
-                        )
+                        _fetch_token(index, quantity, related, token_copies, prefer_langs, front_img_dir, double_sided_dir)
 
 def get_handle_card(
     ignore_set_and_collector_number: bool,
@@ -502,6 +516,7 @@ def get_handle_card(
     double_sided_dir: str,
 
     skip_basics: bool = False,
+    token_copies: int = 0,
 ):
     def configured_fetch_card(index: int, name: str, card_set: str = None, card_collector_number: int = None, quantity: int = 1):
         fetch_card(
@@ -530,6 +545,7 @@ def get_handle_card(
             front_img_dir,
             double_sided_dir,
             skip_basics=skip_basics,
+            token_copies=token_copies,
         )
 
     def configured_prefetch(entries):

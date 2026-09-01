@@ -1050,6 +1050,42 @@ def find_best_orientation(
     return best_orientation, best_computed
 
 
+def stamp_exact_page_size(pdf_path: str, paper_width: str, paper_height: str):
+    """Rewrite every page's MediaBox to the exact declared paper size.
+
+    PIL derives the page box from the raster's whole-pixel size, and the page
+    canvas (a matplotlib figure) is truncated to whole pixels — so an A4 sheet
+    comes out ~0.2pt short and printer drivers/viewers report it as "Custom"
+    instead of A4. The raster stays anchored at the origin; each page only
+    gains a sub-0.1mm blank sliver at the top/right edge, so content printed
+    at 100% does not move.
+    """
+    try:
+        from pypdf import PdfWriter
+        from pypdf.generic import RectangleObject
+    except ImportError:
+        print('WARNING: pypdf not installed — page size left at raster-derived dimensions '
+              '(reads as "Custom" rather than the real paper size). Reinstall requirements.txt.')
+        return
+
+    w_pt = round(size_convert.size_to_pt(paper_width), 2)
+    h_pt = round(size_convert.size_to_pt(paper_height), 2)
+
+    writer = PdfWriter(clone_from=pdf_path)
+    for page in writer.pages:
+        # Match the page's orientation (pages are normally landscape, but
+        # don't assume it).
+        box = page.mediabox
+        if box.width >= box.height:
+            target = (max(w_pt, h_pt), min(w_pt, h_pt))
+        else:
+            target = (min(w_pt, h_pt), max(w_pt, h_pt))
+        page.mediabox = RectangleObject((0, 0, *target))
+        page.cropbox = RectangleObject((0, 0, *target))
+    with open(pdf_path, 'wb') as f:
+        writer.write(f)
+
+
 def generate_pdf(
     front_dir_path: str,
     back_dir_path: str,
@@ -1498,6 +1534,7 @@ def generate_pdf(
 
         else:
             pages[0].save(output_path, format='PDF', save_all=True, append_images=pages[1:], resolution=math.floor(300 * ppi_ratio), speed=0, subsampling=0, quality=quality)
+            stamp_exact_page_size(output_path, paper_size_def.width, paper_size_def.height)
             print(f'Generated PDF: {output_path}')
 
 

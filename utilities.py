@@ -915,6 +915,8 @@ def add_front_back_pages(front_page: Image.Image, back_page: Image.Image, pages:
     label_text = f'sheet: {num_sheet}, template: {template}'
     if label is not None:
         label_text = f'label: {label}, {label_text}'
+    if label == '':
+        label_text = None  # --label '': no label at all (mtg-proxy's 3x3 sheets, where it sits by a mark)
 
     # Label goes on the short side of the paper, opposite the top-left black square.
     # Landscape: short sides are left/right; black square top-left → label on RIGHT.
@@ -925,14 +927,16 @@ def add_front_back_pages(front_page: Image.Image, back_page: Image.Image, pages:
         draw = ImageDraw.Draw(front_page)
         label_x = math.floor((page_height / 2) * ppi_ratio)
         label_y = math.floor(page_width * ppi_ratio) - label_margin_px
-        draw.text((label_x, label_y), label_text, fill=(0, 0, 0), anchor="mm", font=font)
+        if label_text is not None:
+            draw.text((label_x, label_y), label_text, fill=(0, 0, 0), anchor="mm", font=font)
         front_page = front_page.rotate(90, expand=True)
     else:
         # Bottom side: horizontal text
         draw = ImageDraw.Draw(front_page)
         label_x = math.floor((page_width / 2) * ppi_ratio)
         label_y = math.floor(page_height * ppi_ratio) - label_margin_px
-        draw.text((label_x, label_y), label_text, fill=(0, 0, 0), anchor="mm", font=font)
+        if label_text is not None:
+            draw.text((label_x, label_y), label_text, fill=(0, 0, 0), anchor="mm", font=font)
 
     # Rotate portrait pages to landscape so the generated PDF is always landscape.
     # This ensures offset_pdf.py works regardless of card orientation detection.

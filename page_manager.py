@@ -37,6 +37,7 @@ def generate_reg_mark(
     length: str,
     dpi: int,
     registration: Registration,
+    inset_y: str | None = None,
 ) -> Image.Image:
     """Generate a registration mark image for the given paper size.
 
@@ -48,6 +49,8 @@ def generate_reg_mark(
         length: Line length for registration marks.
         dpi: Resolution in dots per inch.
         registration: Registration pattern (THREE or FOUR).
+        inset_y: Distance from the top and bottom edges, when it differs from ``inset`` (which
+            then sets only the left and right).
 
     Returns:
         PIL Image with registration marks drawn on a white background.
@@ -55,6 +58,7 @@ def generate_reg_mark(
     paper_width_mm = size_convert.size_to_mm(paper_width)
     paper_height_mm = size_convert.size_to_mm(paper_height)
     inset_mm = size_convert.size_to_mm(inset)
+    inset_y_mm = size_convert.size_to_mm(inset_y) if inset_y else inset_mm
     thickness_mm = size_convert.size_to_mm(thickness)
     thickness_pt = size_convert.size_to_pt(thickness)
     length_mm = size_convert.size_to_mm(length)
@@ -63,6 +67,7 @@ def generate_reg_mark(
     length_mm = max(MIN_REG_LENGTH_MM, min(length_mm, MAX_REG_LENGTH_MM))
     thickness_mm = max(MIN_REG_THICKNESS_MM, min(thickness_mm, MAX_REG_THICKNESS_MM))
     inset_mm = min(inset_mm, MAX_REG_INSET_MM)
+    inset_y_mm = min(inset_y_mm, MAX_REG_INSET_MM)
 
     # Create figure sized to the paper dimensions
     fig = plt.figure(figsize=(paper_width_mm / 25.4, paper_height_mm / 25.4), dpi=dpi)
@@ -78,7 +83,7 @@ def generate_reg_mark(
         # 3-mark scan (TB123) assumes exactly 5 mm, and a stroke makes it 6 mm, which the
         # machine finds but then fails to measure.
         square = Rectangle(
-            (inset_mm, paper_height_mm - inset_mm - 5),
+            (inset_mm, paper_height_mm - inset_y_mm - 5),
             5, 5,
             facecolor='black',
             edgecolor='none',
@@ -89,48 +94,48 @@ def generate_reg_mark(
         # Top-left L-shape (horizontal line)
         x_start = inset_mm
         x_end = inset_mm + length_mm - (thickness_mm / 2)
-        y_start = paper_height_mm - inset_mm
-        y_end = paper_height_mm - inset_mm
+        y_start = paper_height_mm - inset_y_mm
+        y_end = paper_height_mm - inset_y_mm
         line = mlines.Line2D([x_start, x_end], [y_start, y_end], color='black', linewidth=thickness_pt)
         ax.add_line(line)
 
         # Top-left L-shape (vertical line)
         x_start = inset_mm
         x_end = inset_mm
-        y_start = paper_height_mm - inset_mm
-        y_end = paper_height_mm - inset_mm - length_mm + (thickness_mm / 2)
+        y_start = paper_height_mm - inset_y_mm
+        y_end = paper_height_mm - inset_y_mm - length_mm + (thickness_mm / 2)
         line = mlines.Line2D([x_start, x_end], [y_start, y_end], color='black', linewidth=thickness_pt)
         ax.add_line(line)
 
     # Bottom-left L-shape (horizontal line)
     x_start = inset_mm
     x_end = inset_mm + length_mm - (thickness_mm / 2)
-    y_start = inset_mm
-    y_end = inset_mm
+    y_start = inset_y_mm
+    y_end = inset_y_mm
     line = mlines.Line2D([x_start, x_end], [y_start, y_end], color='black', linewidth=thickness_pt)
     ax.add_line(line)
 
     # Bottom-left L-shape (vertical line)
     x_start = inset_mm
     x_end = inset_mm
-    y_start = inset_mm
-    y_end = inset_mm + length_mm - (thickness_mm / 2)
+    y_start = inset_y_mm
+    y_end = inset_y_mm + length_mm - (thickness_mm / 2)
     line = mlines.Line2D([x_start, x_end], [y_start, y_end], color='black', linewidth=thickness_pt)
     ax.add_line(line)
 
     # Top-right L-shape (horizontal line)
     x_start = paper_width_mm - inset_mm - length_mm + (thickness_mm / 2)
     x_end = paper_width_mm - inset_mm
-    y_start = paper_height_mm - inset_mm
-    y_end = paper_height_mm - inset_mm
+    y_start = paper_height_mm - inset_y_mm
+    y_end = paper_height_mm - inset_y_mm
     line = mlines.Line2D([x_start, x_end], [y_start, y_end], color='black', linewidth=thickness_pt)
     ax.add_line(line)
 
     # Top-right L-shape (vertical line)
     x_start = paper_width_mm - inset_mm
     x_end = paper_width_mm - inset_mm
-    y_start = paper_height_mm - inset_mm
-    y_end = paper_height_mm - inset_mm - length_mm + (thickness_mm / 2)
+    y_start = paper_height_mm - inset_y_mm
+    y_end = paper_height_mm - inset_y_mm - length_mm + (thickness_mm / 2)
     line = mlines.Line2D([x_start, x_end], [y_start, y_end], color='black', linewidth=thickness_pt)
     ax.add_line(line)
 
@@ -138,16 +143,16 @@ def generate_reg_mark(
         # Bottom-right L-shape (horizontal line)
         x_start = paper_width_mm - inset_mm - length_mm + (thickness_mm / 2)
         x_end = paper_width_mm - inset_mm
-        y_start = inset_mm
-        y_end = inset_mm
+        y_start = inset_y_mm
+        y_end = inset_y_mm
         line = mlines.Line2D([x_start, x_end], [y_start, y_end], color='black', linewidth=thickness_pt)
         ax.add_line(line)
 
         # Bottom-right L-shape (vertical line)
         x_start = paper_width_mm - inset_mm
         x_end = paper_width_mm - inset_mm
-        y_start = inset_mm
-        y_end = inset_mm + length_mm - (thickness_mm / 2)
+        y_start = inset_y_mm
+        y_end = inset_y_mm + length_mm - (thickness_mm / 2)
         line = mlines.Line2D([x_start, x_end], [y_start, y_end], color='black', linewidth=thickness_pt)
         ax.add_line(line)
 

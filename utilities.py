@@ -98,6 +98,7 @@ class CardSizeDef(BaseModel):
 
 class RegistrationSettings(BaseModel):
     inset: Optional[str] = None
+    inset_y: Optional[str] = None  # top and bottom, when they differ from the sides (inset)
     thickness: Optional[str] = None
     length: Optional[str] = None
 
@@ -1262,6 +1263,7 @@ def generate_pdf(
 
         template = template_name(paper_size, card_size, variant, version)
 
+    effective_inset_y = lr.inset_y or None
     effective_thickness = lr.thickness or default_reg.thickness
     effective_length = lr.length or default_reg.length
 
@@ -1350,6 +1352,7 @@ def generate_pdf(
         effective_length,
         layout_config.ppi,
         registration,
+        inset_y=effective_inset_y,
     ) as reg_im:
         reg_im = reg_im.resize([math.floor(reg_im.width * ppi_ratio), math.floor(reg_im.height * ppi_ratio)])
 

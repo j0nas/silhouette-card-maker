@@ -1177,7 +1177,8 @@
                     "num_rows": 3,
                     "num_cols": 3,
                     "registration": {
-                        "length": "10.5mm"
+                        "length": "10.5mm",
+                        "inset_y": "7mm"
                     }
                 }
             },

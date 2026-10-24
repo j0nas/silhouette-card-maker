@@ -74,13 +74,15 @@ def generate_reg_mark(
     ax.set_facecolor('white')
 
     if registration == Registration.THREE:
-        # Add filled black square (5x5mm at inset from left and top)
+        # Add filled black square (5x5mm at inset from left and top). No outline: the Cameo's
+        # 3-mark scan (TB123) assumes exactly 5 mm, and a stroke makes it 6 mm, which the
+        # machine finds but then fails to measure.
         square = Rectangle(
             (inset_mm, paper_height_mm - inset_mm - 5),
             5, 5,
             facecolor='black',
-            edgecolor='black',
-            linewidth=thickness_pt
+            edgecolor='none',
+            linewidth=0
         )
         ax.add_patch(square)
     else:  # Registration.FOUR

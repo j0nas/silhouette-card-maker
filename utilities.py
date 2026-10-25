@@ -1120,6 +1120,7 @@ def generate_pdf(
     specialty: Optional[str] = None,
     borderless: bool = False,
     registration_orientation_override: Optional[str] = None,
+    back_marks: bool = True,
 ):
     # Sanity checks for the different directories
     f_path = Path(front_dir_path)
@@ -1443,7 +1444,9 @@ def generate_pdf(
                 back_card_images.append(single_back_image)
 
             front_page = reg_im.copy()
-            back_page = reg_im.copy()
+            # Without marks, a back page starts as plain white: nothing scans it, and a mark printed
+            # there shows through behind a front mark once the sheet is turned over.
+            back_page = reg_im.copy() if back_marks else Image.new(reg_im.mode, reg_im.size, "white")
 
             # Create front layout
             draw_card_layout(

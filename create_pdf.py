@@ -51,6 +51,7 @@ specialty_choices = get_all_specialty_layout_names(layout_config)
 @click.option("--label", help="Apply a custom label to each page.")
 @click.option("--show_outline", default=False, is_flag=True, help="Show a white outline for cutting paths.")
 @click.option("--borderless", default=False, is_flag=True, help="Use tighter inset to fit more cards per page.")
+@click.option("--no_back_marks", default=False, is_flag=True, help="Leave registration marks off the back pages. Turned over the long edge, the back's square lands behind the front's top-right mark and can show through enough to make the cutter misread it.")
 
 @click.version_option("3.0.0")
 
@@ -82,7 +83,8 @@ def cli(
     load_offset,
     label,
     show_outline,
-    borderless
+    borderless,
+    no_back_marks,
 ):
     generate_pdf(
         front_dir_path,
@@ -113,6 +115,7 @@ def cli(
         specialty=specialty,
         borderless=borderless,
         registration_orientation_override=registration_orientation,
+        back_marks=not no_back_marks,
     )
 
 if __name__ == '__main__':

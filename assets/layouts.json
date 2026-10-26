@@ -1169,6 +1169,10 @@
                     "num_cols": 4,
                     "registration": {
                         "length": "9.4mm"
+                    },
+                    "proof_targets": {
+                        "size": "3mm",
+                        "at": [["165mm", "12.9mm"], ["190mm", "12.9mm"], ["215mm", "12.9mm"], ["240mm", "12.9mm"]]
                     }
                 },
                 "borderless": {
@@ -1179,6 +1183,10 @@
                     "registration": {
                         "length": "6mm",
                         "inset_y": "9mm"
+                    },
+                    "proof_targets": {
+                        "size": "3mm",
+                        "at": [["120mm", "11.75mm"], ["142mm", "11.75mm"], ["164mm", "11.75mm"], ["186mm", "11.75mm"]]
                     }
                 }
             },

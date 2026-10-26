@@ -8,7 +8,7 @@ import re
 import sys
 from glob import glob
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from xml.dom import ValidationErr
 
 from natsort import natsorted
@@ -103,6 +103,15 @@ class RegistrationSettings(BaseModel):
     length: Optional[str] = None
 
 
+class ProofTargets(BaseModel):
+    """Small filled black squares printed with the registration marks, for a cutter's proof cuts:
+    the cut traces one target's edge after the mark scan, so a misread shows as a gap between the
+    cut and the black (mtg-proxy's cut-proxies --proof). Their side, and each one's centre as
+    (x, y) from the page's top-left corner, y down, on the page as the marks are drawn."""
+    size: str
+    at: List[Tuple[str, str]]
+
+
 class VariantRegistrationSettings(BaseModel):
     default: RegistrationSettings
     borderless: RegistrationSettings
@@ -165,6 +174,7 @@ class CardLayout(BaseModel):
     num_rows: Optional[int] = None
     num_cols: Optional[int] = None
     registration: Optional[RegistrationSettings] = None
+    proof_targets: Optional[ProofTargets] = None
 
 class LayoutConfig(BaseModel):
     ppi: int
@@ -1223,6 +1233,7 @@ def generate_pdf(
 
         lr = spec.registration or RegistrationSettings()
         effective_inset = lr.inset or default_reg.inset
+        proof_targets = None
 
     else:
         # Resolve aliases
@@ -1267,6 +1278,7 @@ def generate_pdf(
             effective_inset = lr.inset or layout_config.defaults.registration.default.inset
 
         template = template_name(paper_size, card_size, variant, version)
+        proof_targets = layout_def.proof_targets
 
     effective_inset_y = lr.inset_y or None
     effective_thickness = lr.thickness or default_reg.thickness
@@ -1358,6 +1370,8 @@ def generate_pdf(
         layout_config.ppi,
         registration,
         inset_y=effective_inset_y,
+        targets=proof_targets.at if proof_targets else (),
+        target_size=proof_targets.size if proof_targets else '0mm',
     ) as reg_im:
         reg_im = reg_im.resize([math.floor(reg_im.width * ppi_ratio), math.floor(reg_im.height * ppi_ratio)])
 

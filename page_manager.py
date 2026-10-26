@@ -1,5 +1,5 @@
 import math
-from typing import List, NamedTuple, Tuple
+from typing import List, NamedTuple, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -38,6 +38,8 @@ def generate_reg_mark(
     dpi: int,
     registration: Registration,
     inset_y: str | None = None,
+    targets: Sequence[Tuple[str, str]] = (),
+    target_size: str = '0mm',
 ) -> Image.Image:
     """Generate a registration mark image for the given paper size.
 
@@ -51,6 +53,9 @@ def generate_reg_mark(
         registration: Registration pattern (THREE or FOUR).
         inset_y: Distance from the top and bottom edges, when it differs from ``inset`` (which
             then sets only the left and right).
+        targets: Proof targets' centres, (x, y) from the top-left corner with y down: a filled
+            square ``target_size`` wide is drawn at each, with no outline, like the 3-mark square.
+        target_size: The proof targets' side.
 
     Returns:
         PIL Image with registration marks drawn on a white background.
@@ -138,6 +143,20 @@ def generate_reg_mark(
     y_end = paper_height_mm - inset_y_mm - length_mm + (thickness_mm / 2)
     line = mlines.Line2D([x_start, x_end], [y_start, y_end], color='black', linewidth=thickness_pt)
     ax.add_line(line)
+
+    # Proof targets: filled squares with no outline, so a cut traced along the edge of one shows
+    # how far it landed from the print.
+    side = size_convert.size_to_mm(target_size)
+    for x, y in targets:
+        x_mm, y_mm = size_convert.size_to_mm(x), size_convert.size_to_mm(y)
+        target = Rectangle(
+            (x_mm - side / 2, paper_height_mm - y_mm - side / 2),
+            side, side,
+            facecolor='black',
+            edgecolor='none',
+            linewidth=0
+        )
+        ax.add_patch(target)
 
     if registration == Registration.FOUR:
         # Bottom-right L-shape (horizontal line)
